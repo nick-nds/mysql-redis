@@ -1,0 +1,124 @@
+########################################################################################################################
+## Docker Compose file for Data Layer (MySQL + Redis)
+##
+## Deploy this on a separate EC2 instance for your database and cache services.
+## This allows your application servers to scale independently.
+##
+## Security Notes:
+## - Ensure this EC2 instance is in a private subnet
+## - Configure security groups to only allow connections from your app servers
+## - Use strong passwords in production
+## - Enable automated backups for MySQL data volume
+########################################################################################################################
+
+services:
+
+    ## MySQL Database Server
+    mysql:
+        container_name: ${COMPOSE_PROJECT_NAME}-mysql
+        image: mysql:8.0.37
+        volumes:
+            - mysql-data:/var/lib/mysql
+            - ./docker/mysql/init:/docker-entrypoint-initdb.d
+        environment:
+            MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-your_secure_root_password}
+            MYSQL_DATABASE: landlord
+            MYSQL_USER: ${MYSQL_USER:-app}
+            MYSQL_PASSWORD: ${MYSQL_PASSWORD:-your_secure_password}
+        ports:
+            - "3306:3306"
+        command:
+            - "--character-set-server=utf8mb4"
+            - "--collation-server=utf8mb4_unicode_ci"
+            - "--max_connections=200"
+            - "--innodb_buffer_pool_size=1G"
+            - "--innodb_log_file_size=256M"
+            - "--slow_query_log=ON"
+            - "--slow_query_log_file=/var/log/mysql/slow.log"
+            - "--long_query_time=2"
+        restart: unless-stopped
+        healthcheck:
+            test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-your_secure_root_password}"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 60s
+        logging:
+            driver: "json-file"
+            options:
+                max-size: "50m"
+                max-file: "5"
+
+    ## Redis Cache Server
+    redis:
+        container_name: ${COMPOSE_PROJECT_NAME}-redis
+        image: redis:7.2.4-alpine
+        volumes:
+            - redis-data:/data
+        ports:
+            - "6379:6379"
+        command:
+            - "redis-server"
+            - "--appendonly"
+            - "yes"
+            - "--appendfsync"
+            - "everysec"
+            - "--maxmemory"
+            - "1gb"
+            - "--maxmemory-policy"
+            - "allkeys-lru"
+            - "--tcp-keepalive"
+            - "60"
+            - "--timeout"
+            - "300"
+            # Uncomment the following line to enable Redis password
+            # - "--requirepass"
+            # - "${REDIS_PASSWORD:-your_secure_redis_password}"
+        restart: unless-stopped
+        healthcheck:
+            test: ["CMD", "redis-cli", "ping"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 30s
+        logging:
+            driver: "json-file"
+            options:
+                max-size: "50m"
+                max-file: "5"
+
+volumes:
+    mysql-data:
+        driver: local
+    redis-data:
+        driver: local
+
+########################################################################################################################
+## Deployment Instructions:
+##
+## 1. Launch an EC2 instance (t3.medium or larger recommended)
+##    - Use Amazon Linux 2 or Ubuntu
+##    - Place in private subnet with security group allowing ports 3306, 6379 from app servers
+##    - Attach an EBS volume for data persistence
+##
+## 2. Install Docker and Docker Compose on the instance
+##
+## 3. Create a .env file with secure passwords:
+##    MYSQL_ROOT_PASSWORD=your_secure_root_password
+##    MYSQL_USER=app
+##    MYSQL_PASSWORD=your_secure_password
+##    REDIS_PASSWORD=your_secure_redis_password
+##
+## 4. Copy this docker-compose.yml and the docker/mysql/init directory
+##
+## 5. Run: docker compose -f docker-compose.yml up -d
+##
+## 6. Configure automated backups:
+##    - EBS snapshots for the data volume
+##    - MySQL dumps to S3
+##    - Redis RDB/AOF backups to S3
+##
+## 7. Update your application .env.production with the private IP of this instance:
+##    DB_HOST=<private-ip-of-data-instance>
+##    REDIS_HOST=<private-ip-of-data-instance>
+########################################################################################################################
